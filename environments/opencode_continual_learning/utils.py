@@ -75,6 +75,7 @@ def transform_row(row: dict) -> dict:
     last_user_idx = max(
         idx for idx, message in enumerate(session_messages) if message["info"]["role"] == "user"
     )
+    last_user_message = session_messages[last_user_idx]
     prefix_session = {**session, "messages": session_messages[:last_user_idx]}
     prompt = _session_to_messages({**session, "messages": session_messages[: last_user_idx + 1]})
 
@@ -85,6 +86,8 @@ def transform_row(row: dict) -> dict:
             "agent": row["agent"],
             "exported_at": row["exported_at"],
             "metadata": row["metadata"],
+            "remote_url": row["metadata"]["remote_url"],
+            "restore_message_id": last_user_message["info"]["id"],
             "session_json": _serialize_session(prefix_session)
             if prefix_session["messages"]
             else "",

@@ -17,7 +17,7 @@ OPENCODE_PROVIDER_ID = "eval"
 DEFAULT_RUN_COMMAND_TEMPLATE = """\
 set -e
 
-apt-get update && apt-get install -y curl
+apt-get update && apt-get install -y curl git
 
 for install_attempt in 1 2 3; do
     if {install_command}; then
@@ -30,7 +30,9 @@ for install_attempt in 1 2 3; do
     echo "OpenCode install attempt $install_attempt/3 failed, retrying in 5s..." >&2
     sleep 5
 done
-export PATH="$HOME/.opencode/bin:$PATH"
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.opencode/bin:$PATH"
 
 mkdir -p ~/.config/opencode
 
@@ -40,12 +42,20 @@ cat > ~/.config/opencode/opencode.json << EOFCONFIG
 {config_json}
 EOFCONFIG
 
-cd {agent_workdir}
+if [ -n "$ROLLOUTS_REMOTE_URL" ] && [ -n "$ROLLOUTS_MESSAGE_ID" ]; then
+    uv tool install agent-rollouts
+    rm -rf {workspace_path}
+    rollouts restore --repo "$ROLLOUTS_REMOTE_URL" --session "$OPENCODE_SESSION_ID" --message "$ROLLOUTS_MESSAGE_ID" --dest {workspace_path}
+else
+    mkdir -p {workspace_path}
+fi
+
+cd {workspace_path}
 if [ -s {session_path} ] && [ -n "$OPENCODE_SESSION_ID" ]; then
     opencode import {session_path}
-    cat {prompt_path} | opencode run --session "$OPENCODE_SESSION_ID" --model {opencode_model} --dir {agent_workdir} 2>&1 | tee {logs_path}
+    cat {prompt_path} | opencode run --session "$OPENCODE_SESSION_ID" --model {opencode_model} --dir {workspace_path} 2>&1 | tee {logs_path}
 else
-    cat {prompt_path} | opencode run --model {opencode_model} --dir {agent_workdir} 2>&1 | tee {logs_path}
+    cat {prompt_path} | opencode run --model {opencode_model} --dir {workspace_path} 2>&1 | tee {logs_path}
 fi
 """
 
@@ -57,6 +67,10 @@ class ContinualLearningEnv(OpenCodeEnv):
     @property
     def remote_session_path(self) -> str:
         return f"{self.asset_dir}/session.json"
+
+    @property
+    def remote_workspace_path(self) -> str:
+        return f"{self.agent_workdir}/repo"
 
     def __init__(
         self,
@@ -97,6 +111,7 @@ class ContinualLearningEnv(OpenCodeEnv):
             install_command=install_command,
             session_path=self.remote_session_path,
             opencode_model=f"{OPENCODE_PROVIDER_ID}/$OPENAI_MODEL",
+            workspace_path=self.remote_workspace_path,
         )
 
     def build_opencode_config(
@@ -150,6 +165,8 @@ class ContinualLearningEnv(OpenCodeEnv):
     async def build_env_vars(self, state: vf.State) -> dict[str, str]:
         env_vars = await super().build_env_vars(state)
         env_vars["OPENCODE_SESSION_ID"] = state["info"]["session_id"]
+        env_vars["ROLLOUTS_REMOTE_URL"] = state["info"]["remote_url"]
+        env_vars["ROLLOUTS_MESSAGE_ID"] = state["info"]["restore_message_id"]
         return env_vars
 
     async def post_sandbox_setup(self, state: vf.State) -> None:
@@ -159,7 +176,11 @@ class ContinualLearningEnv(OpenCodeEnv):
             return
 
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
-            f.write(state["info"]["session_json"].replace("__AGENT_WORKDIR__", self.agent_workdir))
+            f.write(
+                state["info"]["session_json"].replace(
+                    "__AGENT_WORKDIR__", self.remote_workspace_path
+                )
+            )
             local_session_path = f.name
 
         try:
