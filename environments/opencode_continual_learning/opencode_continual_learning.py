@@ -1,3 +1,4 @@
+import asyncio
 import json
 import random
 import tempfile
@@ -5,6 +6,7 @@ from pathlib import Path
 
 from datasets import Dataset
 from huggingface_hub import hf_hub_download
+from prime_tunnel import TunnelConnectionError, TunnelTimeoutError
 import verifiers as vf
 from verifiers.envs.experimental.opencode_env import OpenCodeEnv
 
@@ -104,8 +106,14 @@ class ContinualLearningEnv(OpenCodeEnv):
         *args,
         install_command: str | None = DEFAULT_INSTALL_COMMAND,
         run_command_template: str | None = DEFAULT_RUN_COMMAND_TEMPLATE,
+        tunnel_startup_max_retries: int = 2,
+        tunnel_retry_delay_seconds: float = 2.0,
+        tunnel_retry_backoff: float = 2.0,
         **kwargs,
     ):
+        self.tunnel_startup_max_retries = max(0, tunnel_startup_max_retries)
+        self.tunnel_retry_delay_seconds = max(0.0, tunnel_retry_delay_seconds)
+        self.tunnel_retry_backoff = max(1.0, tunnel_retry_backoff)
         super().__init__(
             *args,
             install_command=install_command or self.DEFAULT_INSTALL_COMMAND,
@@ -113,6 +121,33 @@ class ContinualLearningEnv(OpenCodeEnv):
             **kwargs,
         )
         self.add_rubric(ContinualLearningDummyRewardRubric())
+
+    async def _retry_tunnel_startup(self, start_tunnel) -> str:
+        attempts = self.tunnel_startup_max_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return await start_tunnel()
+            except (TunnelConnectionError, TunnelTimeoutError) as exc:
+                if attempt >= attempts:
+                    raise
+
+                delay_seconds = self.tunnel_retry_delay_seconds * (
+                    self.tunnel_retry_backoff ** (attempt - 1)
+                )
+                self.logger.warning(
+                    "Tunnel startup failed on attempt %s/%s with %s: %s. Retrying in %.1fs.",
+                    attempt,
+                    attempts,
+                    type(exc).__name__,
+                    exc,
+                    delay_seconds,
+                )
+                await asyncio.sleep(delay_seconds)
+
+        raise RuntimeError("unreachable")
+
+    async def get_tunnel_url(self) -> str:
+        return await self._retry_tunnel_startup(super().get_tunnel_url)
 
     def build_run_command(
         self,
