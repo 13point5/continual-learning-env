@@ -13,7 +13,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-include = ["opencode_continual_learning.py", "pyproject.toml"] 
+include = ["opencode_continual_learning.py", "utils.py", "pyproject.toml"] 
 
 [tool.verifiers.eval]
 num_examples = 5

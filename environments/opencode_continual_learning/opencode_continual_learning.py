@@ -2,11 +2,16 @@ import json
 import tempfile
 from pathlib import Path
 
-from datasets import load_dataset
+from datasets import Dataset
+from huggingface_hub import hf_hub_download
 import verifiers as vf
 from verifiers.envs.experimental.opencode_env import OpenCodeEnv
 
+from utils import transform_row
+
+
 DEFAULT_INSTALL_COMMAND = "curl -fsSL https://opencode.ai/install | bash -s -- --version v1.3.13"
+OPENCODE_PROVIDER_ID = "eval"
 
 
 DEFAULT_RUN_COMMAND_TEMPLATE = """\
@@ -35,85 +40,14 @@ cat > ~/.config/opencode/opencode.json << EOFCONFIG
 {config_json}
 EOFCONFIG
 
-opencode import {session_path}
-
 cd {agent_workdir}
-cat {prompt_path} | opencode run --session "$OPENCODE_SESSION_ID" 2>&1 | tee {logs_path}
+if [ -s {session_path} ] && [ -n "$OPENCODE_SESSION_ID" ]; then
+    opencode import {session_path}
+    cat {prompt_path} | opencode run --session "$OPENCODE_SESSION_ID" --model {opencode_model} --dir {agent_workdir} 2>&1 | tee {logs_path}
+else
+    cat {prompt_path} | opencode run --model {opencode_model} --dir {agent_workdir} 2>&1 | tee {logs_path}
+fi
 """
-
-
-def _session_to_messages(session: dict) -> list[dict]:
-    messages = []
-
-    for session_message in session["messages"]:
-        role = session_message["info"]["role"]
-        parts = session_message.get("parts", [])
-
-        if role == "user":
-            content = "\n\n".join(part["text"] for part in parts if part.get("type") == "text")
-            if content:
-                messages.append({"role": "user", "content": content})
-            continue
-
-        reasoning = "\n\n".join(part["text"] for part in parts if part.get("type") == "reasoning")
-        content = "\n\n".join(part["text"] for part in parts if part.get("type") == "text")
-        tool_parts = [part for part in parts if part.get("type") == "tool"]
-
-        if content or reasoning or tool_parts:
-            assistant_message = {"role": "assistant", "content": content}
-            if reasoning:
-                assistant_message["reasoning_content"] = reasoning
-            if tool_parts:
-                assistant_message["tool_calls"] = [
-                    {
-                        "id": part["callID"],
-                        "name": part["tool"],
-                        "arguments": json.dumps(
-                            part["state"].get("input", {}),
-                            separators=(",", ":"),
-                        ),
-                    }
-                    for part in tool_parts
-                ]
-            messages.append(assistant_message)
-
-        for part in tool_parts:
-            output = part["state"].get("output", "")
-            if not isinstance(output, str):
-                output = json.dumps(output)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": part["callID"],
-                    "content": output,
-                }
-            )
-
-    return messages
-
-
-def _last_user_prompt(messages: list[dict]) -> str:
-    for message in reversed(messages):
-        if message["role"] == "user":
-            return message["content"]
-
-    return ""
-
-
-def _transform_row(row: dict) -> dict:
-    prompt = _session_to_messages(row["session"])
-
-    return {
-        "prompt": prompt,
-        "info": {
-            "session_id": row["session_id"],
-            "agent": row["agent"],
-            "exported_at": row["exported_at"],
-            "metadata": row["metadata"],
-            "session_json": row["session"],
-            "resume_prompt": _last_user_prompt(prompt),
-        },
-    }
 
 
 class ContinualLearningEnv(OpenCodeEnv):
@@ -162,7 +96,56 @@ class ContinualLearningEnv(OpenCodeEnv):
             logs_path=self.remote_logs_path,
             install_command=install_command,
             session_path=self.remote_session_path,
+            opencode_model=f"{OPENCODE_PROVIDER_ID}/$OPENAI_MODEL",
         )
+
+    def build_opencode_config(
+        self,
+        disabled_tools: list[str] | None = None,
+        system_prompt_path: str | None = None,
+        disable_compaction: bool = True,
+        enable_interleaved: bool = True,
+    ) -> str:
+        config = {
+            "${SCHEMA_DOLLAR}schema": "https://opencode.ai/config.json",
+            "provider": {
+                OPENCODE_PROVIDER_ID: {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": OPENCODE_PROVIDER_ID,
+                    "options": {
+                        "baseURL": "$OPENAI_BASE_URL",
+                        "apiKey": "intercepted",
+                        "timeout": self.provider_timeout_ms,
+                    },
+                    "models": {
+                        "$OPENAI_MODEL": {
+                            "name": "$OPENAI_MODEL",
+                            "modalities": {
+                                "input": ["text", "image"],
+                                "output": ["text"],
+                            },
+                            "interleaved": {"field": "reasoning_content"}
+                            if enable_interleaved
+                            else False,
+                        }
+                    },
+                }
+            },
+            "model": f"{OPENCODE_PROVIDER_ID}/$OPENAI_MODEL",
+        }
+
+        if disable_compaction:
+            config["compaction"] = {"auto": False, "prune": False}
+
+        if system_prompt_path or disabled_tools:
+            build_config = {}
+            if system_prompt_path:
+                build_config["prompt"] = "{file:" + system_prompt_path + "}"
+            if disabled_tools:
+                build_config["tools"] = {tool: False for tool in disabled_tools}
+            config["agent"] = {"build": build_config}
+
+        return json.dumps(config, indent=2)
 
     async def build_env_vars(self, state: vf.State) -> dict[str, str]:
         env_vars = await super().build_env_vars(state)
@@ -172,8 +155,11 @@ class ContinualLearningEnv(OpenCodeEnv):
     async def post_sandbox_setup(self, state: vf.State) -> None:
         await super().post_sandbox_setup(state)
 
+        if not state["info"]["session_json"]:
+            return
+
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
-            json.dump(state["info"]["session_json"], f)
+            f.write(state["info"]["session_json"].replace("__AGENT_WORKDIR__", self.agent_workdir))
             local_session_path = f.name
 
         try:
@@ -194,7 +180,12 @@ def load_environment(**kwargs) -> vf.Environment:
     Loads a custom environment.
     """
 
-    dataset = load_dataset("13point5/opencode-rollouts-test", split="train")
-    dataset = dataset.map(_transform_row)
+    data_path = hf_hub_download(
+        repo_id="13point5/opencode-rollouts-test",
+        repo_type="dataset",
+        filename="train.jsonl",
+    )
+    with open(data_path) as f:
+        dataset = Dataset.from_list([transform_row(json.loads(line)) for line in f])
 
     return ContinualLearningEnv(dataset=dataset, **kwargs)
