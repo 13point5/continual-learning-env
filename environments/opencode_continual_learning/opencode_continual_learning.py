@@ -1,4 +1,5 @@
 import json
+import random
 import tempfile
 from pathlib import Path
 
@@ -60,6 +61,32 @@ fi
 """
 
 
+class ContinualLearningDummyRewardRubric(vf.Rubric):
+    """Assign a simple dummy reward based on whether the agent run succeeded."""
+
+    def __init__(self):
+        super().__init__()
+        self.add_reward_func(self.dummy_success_reward)
+        self.add_metric(self.agent_succeeded)
+
+    @staticmethod
+    def _agent_succeeded(state: vf.State) -> bool:
+        return (
+            state.get("stop_condition") == "agent_completed"
+            and not state.get("agent_timed_out", False)
+            and state.get("agent_exit_code") == 0
+            and state.get("error") is None
+        )
+
+    async def dummy_success_reward(self, state: vf.State) -> float:
+        if not self._agent_succeeded(state):
+            return 0.0
+        return random.uniform(0.1, 1.0)
+
+    async def agent_succeeded(self, state: vf.State) -> float:
+        return float(self._agent_succeeded(state))
+
+
 class ContinualLearningEnv(OpenCodeEnv):
     DEFAULT_INSTALL_COMMAND = DEFAULT_INSTALL_COMMAND
     DEFAULT_RUN_COMMAND_TEMPLATE = DEFAULT_RUN_COMMAND_TEMPLATE
@@ -85,6 +112,7 @@ class ContinualLearningEnv(OpenCodeEnv):
             run_command_template=run_command_template or self.DEFAULT_RUN_COMMAND_TEMPLATE,
             **kwargs,
         )
+        self.add_rubric(ContinualLearningDummyRewardRubric())
 
     def build_run_command(
         self,
