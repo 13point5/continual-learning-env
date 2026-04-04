@@ -1,0 +1,11 @@
+model = "PrimeIntellect/INTELLECT-3.1"
+max_steps = 3
+batch_size = 2
+rollouts_per_example = 1
+
+[sampling]
+max_tokens = 50000
+
+[[env]]
+id = "13point5/opencode-continual-learning"
+args = {"batch_id"=2}

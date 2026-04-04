@@ -259,13 +259,15 @@ class ContinualLearningEnv(OpenCodeEnv):
         return state["info"]["resume_prompt"]
 
 
-def load_environment(**kwargs) -> vf.Environment:
+def load_environment(
+    dataset: str | None = "13point5/opencode-rollouts-test", **kwargs
+) -> vf.Environment:
     """
     Loads a custom environment.
     """
 
     data_path = hf_hub_download(
-        repo_id="13point5/opencode-rollouts-test",
+        repo_id=dataset,
         repo_type="dataset",
         filename="train.jsonl",
     )

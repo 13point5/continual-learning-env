@@ -1,51 +1,69 @@
 # opencode-continual-learning
 
-> Replace the placeholders below, then remove this callout.
-
 ### Overview
-- **Environment ID**: `opencode-continual-learning`
-- **Short description**: <one-sentence description>
-- **Tags**: <comma-separated tags>
 
-### Datasets
-- **Primary dataset(s)**: <name(s) and brief description>
-- **Source links**: <links>
-- **Split sizes**: <train/eval counts>
+- **Environment ID**: `opencode-continual-learning`
+- **Short description**: Continual learning environment that resumes OpenCode agent sessions from prior rollouts and evaluates whether the agent successfully completes the task.
+- **Tags**: continual-learning, opencode, agent, multi-turn
 
 ### Task
-- **Type**: <single-turn | multi-turn | tool use>
-- **Output format expectations (optional)**: <e.g., plain text, XML tags, JSON schema>
-- **Rubric overview**: <briefly list reward functions and key metrics>
+
+- **Type**: multi-turn, agent-based
+- **Output format expectations**: Plain text (agent completion log)
+- **Rubric overview**: Dummy reward (random 0.1–1.0) if agent completes successfully; 0.0 otherwise.
 
 ### Quickstart
+
 Run an evaluation with default settings:
 
 ```bash
 prime eval run opencode-continual-learning
 ```
 
-Configure model and sampling:
-
-```bash
-prime eval run opencode-continual-learning   -m gpt-4.1-mini   -n 20 -r 3 -t 1024 -T 0.7   -a '{"key": "value"}'  # env-specific args as JSON
-```
-
 Notes:
+
 - Use `-a` / `--env-args` to pass environment-specific configuration as a JSON object.
 
 ### Environment Arguments
-Document any supported environment arguments and their meaning. Example:
 
-| Arg | Type | Default | Description |
-| --- | ---- | ------- | ----------- |
-| `foo` | str | `"bar"` | What this controls |
-| `max_examples` | int | `-1` | Limit on dataset size (use -1 for all) |
+| Arg       | Type | Default                             | Description                                                      |
+| --------- | ---- | ----------------------------------- | ---------------------------------------------------------------- |
+| `dataset` | str  | `"13point5/opencode-rollouts-test"` | Hugging Face dataset repo ID containing rollouts (`train.jsonl`) |
 
 ### Metrics
-Summarize key metrics your rubric emits and how they’re interpreted.
 
-| Metric | Meaning |
-| ------ | ------- |
-| `reward` | Main scalar reward (weighted sum of criteria) |
-| `accuracy` | Exact match on target answer |
+| Metric            | Meaning                                                              |
+| ----------------- | -------------------------------------------------------------------- |
+| `reward`          | Dummy reward: random 0.1–1.0 if agent succeeded, else 0.0            |
+| `agent_succeeded` | 1.0 if agent completed (exit code 0, no timeout, no error), else 0.0 |
 
+### Dataset Format
+
+The environment expects a Hugging Face dataset with `train.jsonl` containing rows with:
+
+```json
+{
+  "session_id": "...",
+  "agent": "...",
+  "exported_at": "...",
+  "metadata": { "remote_url": "..." },
+  "session": {
+    "messages": [
+      {
+        "info": { "role": "user" },
+        "parts": [{ "type": "text", "text": "..." }]
+      },
+      {
+        "info": { "role": "assistant" },
+        "parts": [
+          { "type": "reasoning" },
+          { "type": "text" },
+          { "type": "tool" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Each row is transformed to extract the prompt (up to and including the last user message) and session state for resumption.

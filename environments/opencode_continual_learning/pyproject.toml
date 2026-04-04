@@ -1,7 +1,7 @@
 [project]
 name = "opencode-continual-learning"
-description = "Your environment description here"
-tags = ["placeholder-tag", "train", "eval"]
+description = "A continual learning environment for OpenCode"
+tags = ["continual-learning", "opencode", "agent", "multi-turn"]
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
