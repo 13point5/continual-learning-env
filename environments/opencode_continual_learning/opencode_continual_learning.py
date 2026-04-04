@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import json
 import random
 import tempfile
@@ -8,6 +9,31 @@ from datasets import Dataset
 from huggingface_hub import hf_hub_download
 from prime_tunnel import TunnelConnectionError, TunnelTimeoutError
 import verifiers as vf
+
+
+def _ensure_sandbox_monitor_rubric() -> None:
+    """Patch older/broken verifiers installs that omit SandboxMonitorRubric."""
+    sandbox_mixin = importlib.import_module("verifiers.envs.experimental.sandbox_mixin")
+    if hasattr(sandbox_mixin, "SandboxMonitorRubric"):
+        return
+
+    class SandboxMonitorRubric(vf.Rubric):
+        async def sandbox_oom(self, state: vf.State) -> float:
+            return float(bool(state.get("sandbox_oom")))
+
+        async def sandbox_timeout(self, state: vf.State) -> float:
+            return float(bool(state.get("sandbox_timeout")))
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.add_metric(self.sandbox_oom)
+            self.add_metric(self.sandbox_timeout)
+
+    sandbox_mixin.SandboxMonitorRubric = SandboxMonitorRubric
+
+
+_ensure_sandbox_monitor_rubric()
+
 from verifiers.envs.experimental.opencode_env import OpenCodeEnv
 
 from utils import transform_row
@@ -260,7 +286,7 @@ class ContinualLearningEnv(OpenCodeEnv):
 
 
 def load_environment(
-    dataset: str | None = "13point5/opencode-rollouts-test", **kwargs
+    dataset: str | None = "13point5/test-2-rollouts-learn", **kwargs
 ) -> vf.Environment:
     """
     Loads a custom environment.
