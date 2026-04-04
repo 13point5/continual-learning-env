@@ -1,7 +1,6 @@
 import asyncio
 import importlib
 import json
-import random
 import tempfile
 from pathlib import Path
 
@@ -90,7 +89,7 @@ fi
 
 
 class ContinualLearningDummyRewardRubric(vf.Rubric):
-    """Assign a simple dummy reward based on whether the agent run succeeded."""
+    """Assign a deterministic reward based on whether the agent run succeeded."""
 
     def __init__(self):
         super().__init__()
@@ -107,9 +106,7 @@ class ContinualLearningDummyRewardRubric(vf.Rubric):
         )
 
     async def dummy_success_reward(self, state: vf.State) -> float:
-        if not self._agent_succeeded(state):
-            return 0.0
-        return random.uniform(0.1, 1.0)
+        return float(self._agent_succeeded(state))
 
     async def agent_succeeded(self, state: vf.State) -> float:
         return float(self._agent_succeeded(state))
@@ -146,7 +143,6 @@ class ContinualLearningEnv(OpenCodeEnv):
             run_command_template=run_command_template or self.DEFAULT_RUN_COMMAND_TEMPLATE,
             **kwargs,
         )
-        self.add_rubric(ContinualLearningDummyRewardRubric())
 
     async def _retry_tunnel_startup(self, start_tunnel) -> str:
         attempts = self.tunnel_startup_max_retries + 1
@@ -300,4 +296,8 @@ def load_environment(
     with open(data_path) as f:
         dataset = Dataset.from_list([transform_row(json.loads(line)) for line in f])
 
-    return ContinualLearningEnv(dataset=dataset, **kwargs)
+    return ContinualLearningEnv(
+        dataset=dataset,
+        rubric=ContinualLearningDummyRewardRubric(),
+        **kwargs,
+    )

@@ -10,7 +10,7 @@
 
 - **Type**: multi-turn, agent-based
 - **Output format expectations**: Plain text (agent completion log)
-- **Rubric overview**: Dummy reward (random 0.1–1.0) if agent completes successfully; 0.0 otherwise.
+- **Rubric overview**: Deterministic reward: 1.0 if the agent completes successfully; 0.0 otherwise.
 
 ### Quickstart
 
@@ -34,7 +34,7 @@ Notes:
 
 | Metric            | Meaning                                                              |
 | ----------------- | -------------------------------------------------------------------- |
-| `reward`          | Dummy reward: random 0.1–1.0 if agent succeeded, else 0.0            |
+| `reward`          | Deterministic reward: 1.0 if agent succeeded, else 0.0               |
 | `agent_succeeded` | 1.0 if agent completed (exit code 0, no timeout, no error), else 0.0 |
 
 ### Dataset Format
